@@ -1,0 +1,50 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+setpoint = 15.0
+t = np.linspace(0, 5, 800)
+
+def damped_response(t, A, tau, w):
+    return setpoint + A * np.exp(-t / tau) * np.sin(w * t)
+
+# ====== Respons dasar (PID optimal kelompokmu) ======
+y_base = damped_response(t, A=1.4, tau=1.1, w=3.2)
+
+# ====== Tambahkan gangguan ======
+t1 = 2.0      # mulai gangguan (detik)
+t2 = 3.2      # selesai gangguan (detik)
+D  = 0.8      # besar gangguan (cm). +D bikin jarak naik, -D bikin jarak turun
+tau_rec = 0.5 # waktu pemulihan setelah gangguan (detik)
+
+disturbance = np.zeros_like(t)
+
+# Selama gangguan aktif: offset konstan
+mask_on = (t >= t1) & (t <= t2)
+disturbance[mask_on] = D
+
+# Setelah gangguan selesai: efeknya pelan-pelan hilang (recovery eksponensial)
+mask_after = t > t2
+disturbance[mask_after] = D * np.exp(-(t[mask_after] - t2) / tau_rec)
+
+# Output akhir: respons + gangguan
+y = y_base + disturbance
+
+# ====== Plot ======
+plt.figure(figsize=(9.6, 5.4))
+plt.plot(t, y, label="PID Optimal + Gangguan", linewidth=2)
+plt.plot(t, y_base, linestyle="--", linewidth=1.5, label="PID Optimal (Tanpa Gangguan)", alpha=0.9)
+plt.axhline(setpoint, linestyle="--", linewidth=2, label="Setpoint 15 cm")
+
+# arsiran area gangguan
+plt.axvspan(t1, t2, color="gray", alpha=0.2, label="Gangguan (mis. selang dipersempit)")
+
+plt.title("Respons Sistem Kendali - PID Optimal dengan Gangguan")
+plt.xlabel("Waktu (detik)")
+plt.ylabel("Jarak (cm)")
+plt.xlim(0, 5)
+plt.ylim(12, 21)
+plt.grid(True, alpha=0.35)
+plt.legend(loc="upper right")
+plt.tight_layout()
+plt.savefig("grafik_PID_gangguan.png", dpi=200)
+plt.show()
