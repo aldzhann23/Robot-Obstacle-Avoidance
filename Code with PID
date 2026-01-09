@@ -27,7 +27,7 @@ const int SERVO_RIGHT  = 10;
 const int SERVO_LEFT   = 170;
 
 /// ===== PID DISTANCE CONTROL =====
-const float SETPOINT_CM = 25.0;
+const float SETPOINT_CM = 15.0;
 
 // Nilai awal tuning PID
 float Kp = 1.4;
