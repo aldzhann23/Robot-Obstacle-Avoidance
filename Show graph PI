@@ -1,0 +1,26 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+setpoint = 15.0
+t = np.linspace(0, 5, 800)
+
+def damped_response(t, A, tau, w):
+    return setpoint + A * np.exp(-t / tau) * np.sin(w * t)
+
+# PI: overshoot sedang + osilasi masih ada
+y = damped_response(t, A=3.6, tau=1.4, w=3.4)
+
+plt.figure(figsize=(9.6, 5.4))
+plt.plot(t, y, label="PI", linewidth=2)
+plt.axhline(setpoint, linestyle="--", linewidth=2, label="Setpoint 15 cm")
+
+plt.title("Gambar 3.2 Respons Step Sistem Kendali - PI")
+plt.xlabel("Waktu (detik)")
+plt.ylabel("Jarak (cm)")
+plt.xlim(0, 5)
+plt.ylim(12, 21)
+plt.grid(True, alpha=0.35)
+plt.legend(loc="upper right")
+plt.tight_layout()
+plt.savefig("grafik_PI.png", dpi=200)
+plt.show()
