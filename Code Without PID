@@ -1,0 +1,163 @@
+#include <Servo.h>
+
+/// ===== PIN SETUP (sesuai rangkaian) =====
+const int TRIG_PIN = 8;
+const int ECHO_PIN = 9;
+
+const int SERVO_PIN = 4;
+
+const int ENA = 5;   // PWM motor A
+const int IN1 = 12;
+const int IN2 = 13;
+
+const int IN3 = 10;
+const int IN4 = 11;
+const int ENB = 6;   // PWM motor B
+
+/// ===== TUNING =====
+const int SPEED_FWD = 170;        // 0..255
+const int SPEED_TURN = 170;       // 0..255
+const int SPEED_BACK = 160;       // 0..255
+const int STOP_DIST_CM = 20;      // jarak berhenti (cm)
+
+const int SERVO_CENTER = 90;
+const int SERVO_RIGHT  = 10;
+const int SERVO_LEFT   = 170;
+
+Servo head;
+
+float readDistanceCm() {
+  // Trigger: LOW sebentar, lalu HIGH 10 microsecond, lalu LOW
+  // (pola trigger umum HC-SR04) :contentReference[oaicite:0]{index=0}
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(5);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  // Baca durasi pulsa HIGH di ECHO (microseconds)
+  // pulseIn mengembalikan panjang pulsa (uS) atau 0 jika timeout :contentReference[oaicite:1]{index=1}
+  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 25000UL); // ~25ms timeout (~4m)
+
+  if (duration == 0) return 999.0; // kalau timeout, anggap jauh
+
+  // Jarak (cm) = (durasi * kecepatan suara cm/us) / 2
+  // 343 m/s = 0.0343 cm/us
+  return (duration * 0.0343f) / 2.0f;
+}
+
+/// ===== MOTOR CONTROL =====
+void setMotorA(bool forward, int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  digitalWrite(IN1, forward ? HIGH : LOW);
+  digitalWrite(IN2, forward ? LOW  : HIGH);
+  analogWrite(ENA, pwm);
+}
+
+void setMotorB(bool forward, int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  digitalWrite(IN3, forward ? HIGH : LOW);
+  digitalWrite(IN4, forward ? LOW  : HIGH);
+  analogWrite(ENB, pwm);
+}
+
+void stopMotors() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+}
+
+void forward() {
+  setMotorA(true,  SPEED_FWD);
+  setMotorB(true,  SPEED_FWD);
+}
+
+void backward(int ms) {
+  setMotorA(false, SPEED_BACK);
+  setMotorB(false, SPEED_BACK);
+  delay(ms);
+  stopMotors();
+}
+
+void turnLeft(int ms) {
+  // kiri mundur, kanan maju (spin)
+  setMotorA(false, SPEED_TURN);
+  setMotorB(true,  SPEED_TURN);
+  delay(ms);
+  stopMotors();
+}
+
+void turnRight(int ms) {
+  // kiri maju, kanan mundur (spin)
+  setMotorA(true,  SPEED_TURN);
+  setMotorB(false, SPEED_TURN);
+  delay(ms);
+  stopMotors();
+}
+
+/// ===== SCAN =====
+float lookAt(int angle) {
+  head.write(angle);               // Servo library Arduino :contentReference[oaicite:2]{index=2}
+  delay(250);                      // tunggu servo stabil
+  // ambil 2x biar lebih stabil
+  float d1 = readDistanceCm();
+  delay(30);
+  float d2 = readDistanceCm();
+  return (d1 + d2) / 2.0f;
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(ENB, OUTPUT); pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+
+  head.attach(SERVO_PIN);          // Servo.attach() :contentReference[oaicite:3]{index=3}
+  head.write(SERVO_CENTER);
+  delay(400);
+
+  stopMotors();
+}
+
+void loop() {
+  head.write(SERVO_CENTER);
+  delay(50);
+
+  float front = readDistanceCm();
+  Serial.print("Front: "); Serial.println(front);
+
+  if (front > STOP_DIST_CM) {
+    forward();
+    return;
+  }
+
+  // Ada halangan
+  stopMotors();
+  delay(80);
+
+  // mundur sedikit
+  backward(250);
+
+  // scan kanan & kiri
+  float rightD = lookAt(SERVO_RIGHT);
+  float leftD  = lookAt(SERVO_LEFT);
+  head.write(SERVO_CENTER);
+  delay(100);
+
+  Serial.print("Right: "); Serial.print(rightD);
+  Serial.print(" | Left: "); Serial.println(leftD);
+
+  // pilih arah dengan jarak lebih lega
+  if (leftD > rightD && leftD > STOP_DIST_CM) {
+    turnLeft(350);
+  } else if (rightD >= leftD && rightD > STOP_DIST_CM) {
+    turnRight(350);
+  } else {
+    // kalau dua-duanya sempit, putar lebih lama
+    turnRight(550);
+  }
+}
