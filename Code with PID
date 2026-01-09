@@ -1,0 +1,241 @@
+#include <Servo.h>
+
+/// ===== PIN SETUP (sesuai rangkaian) =====
+const int TRIG_PIN = 8;
+const int ECHO_PIN = 9;
+
+const int SERVO_PIN = 4;
+
+const int ENA = 5;   // PWM motor A (kiri)
+const int IN1 = 12;
+const int IN2 = 13;
+
+const int IN3 = 10;  // motor B (kanan)
+const int IN4 = 11;
+const int ENB = 6;   // PWM motor B
+
+/// ===== TUNING & LIMITS =====
+const int PWM_MAX_FWD  = 200;     // batas pwm maju
+const int PWM_MAX_BACK = 180;     // batas pwm mundur
+const int PWM_MIN_MOVE = 60;      // pwm minimal biar motor gerak
+
+const int STOP_DIST_CM     = 20;  // jarak minimum sebelum avoid (cm)
+const int CRITICAL_DIST_CM = 12;  // jarak kritis: mundur + scan
+
+const int SERVO_CENTER = 90;
+const int SERVO_RIGHT  = 10;
+const int SERVO_LEFT   = 170;
+
+/// ===== PID DISTANCE CONTROL =====
+const float SETPOINT_CM = 25.0;
+
+// Nilai awal tuning PID
+float Kp = 1.4;
+float Ki = 0.8;
+float Kd = 0.25;
+
+// PID internal state
+float integral = 0.0;
+float lastError = 0.0;
+unsigned long lastTime = 0;
+
+// Anti windup
+const float INTEGRAL_LIMIT = 250.0;
+
+Servo head;
+
+/// ===== ULTRASONIC =====
+float readDistanceCm() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(5);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 25000UL);
+  if (duration == 0) return 999.0; // timeout → jauh
+
+  return (duration * 0.0343f) / 2.0f;
+}
+
+float readDistanceFiltered(int samples) {
+  if (samples < 1) samples = 1;
+
+  float sum = 0.0;
+  for (int i = 0; i < samples; i++) {
+    sum += readDistanceCm();
+    delay(15);
+  }
+  return sum / samples;
+}
+
+/// ===== MOTOR CONTROL =====
+void setMotorA(bool forward, int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  digitalWrite(IN1, forward ? HIGH : LOW);
+  digitalWrite(IN2, forward ? LOW  : HIGH);
+  analogWrite(ENA, pwm);
+}
+
+void setMotorB(bool forward, int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  digitalWrite(IN3, forward ? HIGH : LOW);
+  digitalWrite(IN4, forward ? LOW  : HIGH);
+  analogWrite(ENB, pwm);
+}
+
+void stopMotors() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+}
+
+void drivePWM(int pwm) {
+  // pwm positif = maju, negatif = mundur
+  if (pwm == 0) {
+    stopMotors();
+    return;
+  }
+
+  if (pwm > 0) {
+    int out = constrain(pwm, PWM_MIN_MOVE, PWM_MAX_FWD);
+    setMotorA(true, out);
+    setMotorB(true, out);
+  } else {
+    int out = constrain(-pwm, PWM_MIN_MOVE, PWM_MAX_BACK);
+    setMotorA(false, out);
+    setMotorB(false, out);
+  }
+}
+
+void backward(int ms, int pwm) {
+  pwm = constrain(pwm, 0, PWM_MAX_BACK);
+  setMotorA(false, pwm);
+  setMotorB(false, pwm);
+  delay(ms);
+  stopMotors();
+}
+
+void turnLeft(int ms, int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  setMotorA(false, pwm);
+  setMotorB(true, pwm);
+  delay(ms);
+  stopMotors();
+}
+
+void turnRight(int ms, int pwm) {
+  pwm = constrain(pwm, 0, 255);
+  setMotorA(true, pwm);
+  setMotorB(false, pwm);
+  delay(ms);
+  stopMotors();
+}
+
+/// ===== SERVO SCAN =====
+float lookAt(int angle) {
+  head.write(angle);
+  delay(250);
+  float d1 = readDistanceFiltered(2);
+  delay(25);
+  float d2 = readDistanceFiltered(2);
+  return (d1 + d2) / 2.0f;
+}
+
+/// ===== PID FUNCTION =====
+int pidDistance(float distanceCm) {
+  unsigned long now = millis();
+  float dt = (now - lastTime) / 1000.0f;
+  if (dt <= 0.0f) dt = 0.01f;
+
+  float error = distanceCm - SETPOINT_CM;
+
+  integral += error * dt;
+  integral = constrain(integral, -INTEGRAL_LIMIT, INTEGRAL_LIMIT);
+
+  float derivative = (error - lastError) / dt;
+
+  float output = (Kp * error) + (Ki * integral) + (Kd * derivative);
+
+  lastError = error;
+  lastTime = now;
+
+  output = constrain(output, -PWM_MAX_BACK, PWM_MAX_FWD);
+  return (int)output;
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(ENB, OUTPUT); pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+
+  head.attach(SERVO_PIN);
+  head.write(SERVO_CENTER);
+  delay(400);
+
+  stopMotors();
+  lastTime = millis();
+}
+
+void loop() {
+  head.write(SERVO_CENTER);
+  delay(30);
+
+  float front = readDistanceFiltered(3);
+
+  // Debug
+  Serial.print("Front: ");
+  Serial.print(front);
+  Serial.print(" | Error: ");
+  Serial.print(front - SETPOINT_CM);
+
+  // ===== CRITICAL AVOID =====
+  if (front <= CRITICAL_DIST_CM) {
+    Serial.println(" | CRITICAL AVOID");
+
+    stopMotors();
+    delay(80);
+
+    backward(300, 170);
+
+    float rightD = lookAt(SERVO_RIGHT);
+    float leftD  = lookAt(SERVO_LEFT);
+
+    head.write(SERVO_CENTER);
+    delay(120);
+
+    Serial.print("Right: ");
+    Serial.print(rightD);
+    Serial.print(" | Left: ");
+    Serial.println(leftD);
+
+    if (leftD > rightD && leftD > STOP_DIST_CM) {
+      turnLeft(380, 180);
+    } else if (rightD >= leftD && rightD > STOP_DIST_CM) {
+      turnRight(380, 180);
+    } else {
+      turnRight(600, 180);
+    }
+    return;
+  }
+
+  // ===== NORMAL PID CONTROL =====
+  int pwm = pidDistance(front);
+
+  Serial.print(" | PWM: ");
+  Serial.println(pwm);
+
+  // deadband supaya tidak jitter
+  if (abs(front - SETPOINT_CM) < 2.0f) {
+    stopMotors();
+  } else {
+    drivePWM(pwm);
+  }
+
+  delay(30);
+}
